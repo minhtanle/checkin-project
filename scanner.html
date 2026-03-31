@@ -70,7 +70,10 @@
         }
 
         const results = await readBarcodes(imageData, {
-          formats: ['QRCode']
+          tryHarder: true,
+          tryDenoise: true,
+          formats: ['QRCode'],
+          maxNumberOfSymbols: 1
         });
 
         if (results.length > 0) {
