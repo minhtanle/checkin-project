@@ -16,30 +16,19 @@
 <body>
   <h1>QR Scanner</h1>
 
-  <button id="btn-camera">Bật Camera</button>
-  <video id="video" autoplay playsinline style="display:none"></video>
-  <button id="btn-capture" style="display:none">Chụp & Quét</button>
-  <button id="btn-stop" style="display:none">Tắt Camera</button>
-
-  <hr>
-  <p>Hoặc chọn ảnh:</p>
-  <button id="btn-file">Chọn Ảnh</button>
-  <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none">
+  <button id="btn-camera">Mở Camera</button>
+  <button id="btn-file">Chọn Ảnh Từ Thư Viện</button>
+  <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+  <input type="file" id="fileInput" accept="image/*" style="display:none">
 
   <div id="result"></div>
 
   <script type="module">
     const result = document.getElementById('result');
+    const cameraInput = document.getElementById('cameraInput');
     const fileInput = document.getElementById('fileInput');
-    const video = document.getElementById('video');
     const btnCamera = document.getElementById('btn-camera');
     const btnFile = document.getElementById('btn-file');
-    const btnCapture = document.getElementById('btn-capture');
-    const btnStop = document.getElementById('btn-stop');
-
-    let stream = null;
-    let videoTrack = null;
-    let imageCapture = null;
 
     result.textContent = 'Đang tải thư viện...';
 
@@ -66,45 +55,6 @@
       return ctx.getImageData(0, 0, canvas.width, canvas.height);
     }
 
-    function imageDataFromVideo(inputVideo) {
-      const width = inputVideo.videoWidth || 1280;
-      const height = inputVideo.videoHeight || 720;
-      const canvas = createCanvas(width, height);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(inputVideo, 0, 0, width, height);
-      return ctx.getImageData(0, 0, width, height);
-    }
-
-    async function captureHighQualityFrame() {
-      if (imageCapture) {
-        const photoBlob = await imageCapture.takePhoto({
-          imageWidth: 3840,
-          imageHeight: 2160
-        });
-        return imageDataFromBlob(photoBlob);
-      }
-      return imageDataFromVideo(video);
-    }
-
-    function setCameraUI(isOn) {
-      video.style.display = isOn ? 'block' : 'none';
-      btnCamera.style.display = isOn ? 'none' : 'inline';
-      btnCapture.style.display = isOn ? 'inline' : 'none';
-      btnStop.style.display = isOn ? 'inline' : 'none';
-      btnFile.disabled = isOn;
-    }
-
-    function stopCamera() {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      stream = null;
-      videoTrack = null;
-      imageCapture = null;
-      video.srcObject = null;
-      setCameraUI(false);
-    }
-
     // Hàm xử lý QR
     async function processQR(input) {
       result.textContent = 'Đang xử lý...';
@@ -115,8 +65,6 @@
 
         if (input instanceof File || input instanceof Blob) {
           imageData = await imageDataFromBlob(input);
-        } else if (input instanceof HTMLVideoElement) {
-          imageData = imageDataFromVideo(input);
         } else {
           imageData = input;
         }
@@ -138,85 +86,28 @@
       }
     }
 
+    btnCamera.addEventListener('click', () => {
+      cameraInput.value = '';
+      cameraInput.click();
+    });
+
     btnFile.addEventListener('click', () => {
       fileInput.value = '';
       fileInput.click();
     });
 
-    // Sự kiện chọn file
-    fileInput.addEventListener('change', async (e) => {
+    // Sự kiện chụp ảnh từ camera
+    cameraInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      stopCamera();
       await processQR(file);
     });
 
-    // Bật camera
-    btnCamera.addEventListener('click', async () => {
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Trình duyệt không hỗ trợ camera.');
-        }
-
-        btnCamera.disabled = true;
-        stopCamera();
-
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 3840 },
-            height: { ideal: 2160 }
-          },
-          audio: false
-        });
-
-        videoTrack = stream.getVideoTracks()[0] || null;
-        if (videoTrack) {
-          try {
-            await videoTrack.applyConstraints({
-              advanced: [
-                { focusMode: 'continuous' },
-                { sharpness: 1 },
-                { exposureMode: 'continuous' }
-              ]
-            });
-          } catch (_) {
-            // Bo qua neu thiet bi/trinh duyet khong ho tro tuy chinh nang cao.
-          }
-
-          if ('ImageCapture' in window) {
-            try {
-              imageCapture = new ImageCapture(videoTrack);
-            } catch (_) {
-              imageCapture = null;
-            }
-          }
-        }
-
-        video.srcObject = stream;
-        setCameraUI(true);
-      } catch (err) {
-        result.textContent = 'Lỗi camera: ' + err.message;
-        result.className = 'error';
-      } finally {
-        btnCamera.disabled = false;
-      }
-    });
-
-    // Chụp & quét
-    btnCapture.addEventListener('click', async () => {
-      try {
-        const frame = await captureHighQualityFrame();
-        await processQR(frame);
-      } catch (err) {
-        result.textContent = 'Loi chup anh: ' + err.message;
-        result.className = 'error';
-      }
-    });
-
-    // Tắt camera
-    btnStop.addEventListener('click', () => {
-      stopCamera();
+    // Sự kiện chọn ảnh từ thư viện
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      await processQR(file);
     });
   </script>
 </body>
