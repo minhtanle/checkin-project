@@ -15,16 +15,17 @@
 </head>
 <body>
   <h1>QR Scanner</h1>
-  
+
+  10
   <button id="btn-camera">Bật Camera</button>
   <video id="video" autoplay playsinline style="display:none"></video>
   <button id="btn-capture" style="display:none">Chụp & Quét</button>
   <button id="btn-stop" style="display:none">Tắt Camera</button>
-  
+
   <hr>
   <p>Hoặc chọn ảnh:</p>
   <input type="file" id="fileInput" accept="image/*">
-  
+
   <div id="result"></div>
 
   <script type="module">
@@ -36,12 +37,53 @@
     const btnStop = document.getElementById('btn-stop');
 
     let stream = null;
+    let videoTrack = null;
+    let imageCapture = null;
 
     result.textContent = 'Đang tải thư viện...';
 
     const { readBarcodes } = await import('https://esm.sh/zxing-wasm@3.0.1/reader');
 
     result.textContent = 'Sẵn sàng';
+
+    function createCanvas(width, height) {
+      if (typeof OffscreenCanvas !== 'undefined') {
+        return new OffscreenCanvas(width, height);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    }
+
+    async function imageDataFromBlob(blob) {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = createCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return ctx.getImageData(0, 0, canvas.width, canvas.height);
+    }
+
+    function imageDataFromVideo(inputVideo) {
+      const width = inputVideo.videoWidth || 1280;
+      const height = inputVideo.videoHeight || 720;
+      const canvas = createCanvas(width, height);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(inputVideo, 0, 0, width, height);
+      return ctx.getImageData(0, 0, width, height);
+    }
+
+    async function captureHighQualityFrame() {
+      if (imageCapture) {
+        const photoBlob = await imageCapture.takePhoto({
+          imageWidth: 3840,
+          imageHeight: 2160
+        });
+        return imageDataFromBlob(photoBlob);
+      }
+      return imageDataFromVideo(video);
+    }
 
     // Hàm xử lý QR
     async function processQR(input) {
@@ -50,14 +92,13 @@
 
       try {
         let imageData;
-        
-        if (input instanceof File) {
-          imageData = input;
+
+        if (input instanceof File || input instanceof Blob) {
+          imageData = await imageDataFromBlob(input);
         } else if (input instanceof HTMLVideoElement) {
-          const canvas = new OffscreenCanvas(input.videoWidth, input.videoHeight);
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(input, 0, 0);
-          imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          imageData = imageDataFromVideo(input);
+        } else {
+          imageData = input;
         }
 
         const results = await readBarcodes(imageData, {
@@ -87,9 +128,38 @@
     // Bật camera
     btnCamera.addEventListener('click', async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'environment' } 
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 }
+          },
+          audio: false
         });
+
+        videoTrack = stream.getVideoTracks()[0] || null;
+        if (videoTrack) {
+          try {
+            await videoTrack.applyConstraints({
+              advanced: [
+                { focusMode: 'continuous' },
+                { sharpness: 1 },
+                { exposureMode: 'continuous' }
+              ]
+            });
+          } catch (_) {
+            // Bo qua neu thiet bi/trinh duyet khong ho tro tuy chinh nang cao.
+          }
+
+          if ('ImageCapture' in window) {
+            try {
+              imageCapture = new ImageCapture(videoTrack);
+            } catch (_) {
+              imageCapture = null;
+            }
+          }
+        }
+
         video.srcObject = stream;
         video.style.display = 'block';
         btnCamera.style.display = 'none';
@@ -101,8 +171,14 @@
     });
 
     // Chụp & quét
-    btnCapture.addEventListener('click', () => {
-      processQR(video);
+    btnCapture.addEventListener('click', async () => {
+      try {
+        const frame = await captureHighQualityFrame();
+        await processQR(frame);
+      } catch (err) {
+        result.textContent = 'Loi chup anh: ' + err.message;
+        result.className = 'error';
+      }
     });
 
     // Tắt camera
@@ -111,6 +187,8 @@
         stream.getTracks().forEach(t => t.stop());
         stream = null;
       }
+      videoTrack = null;
+      imageCapture = null;
       video.style.display = 'none';
       btnCamera.style.display = 'inline';
       btnCapture.style.display = 'none';
