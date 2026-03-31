@@ -16,7 +16,6 @@
 <body>
   <h1>QR Scanner</h1>
 
-  10
   <button id="btn-camera">Bật Camera</button>
   <video id="video" autoplay playsinline style="display:none"></video>
   <button id="btn-capture" style="display:none">Chụp & Quét</button>
@@ -24,7 +23,8 @@
 
   <hr>
   <p>Hoặc chọn ảnh:</p>
-  <input type="file" id="fileInput" accept="image/*">
+  <button id="btn-file">Chọn Ảnh</button>
+  <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none">
 
   <div id="result"></div>
 
@@ -33,6 +33,7 @@
     const fileInput = document.getElementById('fileInput');
     const video = document.getElementById('video');
     const btnCamera = document.getElementById('btn-camera');
+    const btnFile = document.getElementById('btn-file');
     const btnCapture = document.getElementById('btn-capture');
     const btnStop = document.getElementById('btn-stop');
 
@@ -85,6 +86,25 @@
       return imageDataFromVideo(video);
     }
 
+    function setCameraUI(isOn) {
+      video.style.display = isOn ? 'block' : 'none';
+      btnCamera.style.display = isOn ? 'none' : 'inline';
+      btnCapture.style.display = isOn ? 'inline' : 'none';
+      btnStop.style.display = isOn ? 'inline' : 'none';
+      btnFile.disabled = isOn;
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      stream = null;
+      videoTrack = null;
+      imageCapture = null;
+      video.srcObject = null;
+      setCameraUI(false);
+    }
+
     // Hàm xử lý QR
     async function processQR(input) {
       result.textContent = 'Đang xử lý...';
@@ -118,16 +138,29 @@
       }
     }
 
+    btnFile.addEventListener('click', () => {
+      fileInput.value = '';
+      fileInput.click();
+    });
+
     // Sự kiện chọn file
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      stopCamera();
       await processQR(file);
     });
 
     // Bật camera
     btnCamera.addEventListener('click', async () => {
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Trình duyệt không hỗ trợ camera.');
+        }
+
+        btnCamera.disabled = true;
+        stopCamera();
+
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
@@ -161,12 +194,12 @@
         }
 
         video.srcObject = stream;
-        video.style.display = 'block';
-        btnCamera.style.display = 'none';
-        btnCapture.style.display = 'inline';
-        btnStop.style.display = 'inline';
+        setCameraUI(true);
       } catch (err) {
         result.textContent = 'Lỗi camera: ' + err.message;
+        result.className = 'error';
+      } finally {
+        btnCamera.disabled = false;
       }
     });
 
@@ -183,16 +216,7 @@
 
     // Tắt camera
     btnStop.addEventListener('click', () => {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-      }
-      videoTrack = null;
-      imageCapture = null;
-      video.style.display = 'none';
-      btnCamera.style.display = 'inline';
-      btnCapture.style.display = 'none';
-      btnStop.style.display = 'none';
+      stopCamera();
     });
   </script>
 </body>
