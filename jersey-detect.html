@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Phát hiện số áo</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <title>Phát hiện số áo - OpenCV</title>
+  <script src="https://docs.opencv.org/4.3.0/opencv.js" async onload="onOpenCvReady()"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -22,11 +22,7 @@
       width: 100%;
       max-width: 400px;
     }
-    video {
-      width: 100%;
-      border-radius: 12px;
-      background: #000;
-    }
+    video { width: 100%; border-radius: 12px; background: #000; }
     .result {
       position: absolute;
       top: 12px;
@@ -41,11 +37,7 @@
       display: none;
     }
     .result.show { display: block; }
-    .status {
-      color: #888;
-      margin-top: 12px;
-      font-size: 14px;
-    }
+    .status { color: #888; margin-top: 12px; font-size: 14px; }
     .btn {
       margin-top: 16px;
       padding: 12px 32px;
@@ -66,8 +58,9 @@
     <div id="result" class="result"></div>
   </div>
   <button id="btnStart" class="btn">Bắt đầu Camera</button>
-  <div id="status" class="status">Chưa khởi động</div>
+  <div id="status" class="status">Chờ tải OpenCV...</div>
 
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script>
     const video = document.getElementById('video');
     const result = document.getElementById('result');
@@ -76,112 +69,144 @@
 
     let worker = null;
     let isProcessing = false;
+    let isOpenCvReady = false;
 
-    async function initOCR() {
-      status.textContent = 'Đang tải OCR...';
-      worker = await Tesseract.createWorker('eng', 1, {
-        logger: m => {
-          if (m.status === 'recognizing text') {
-            status.textContent = `Đang nhận dạng: ${Math.round(m.progress * 100)}%`;
+    function onOpenCvReady() {
+      isOpenCvReady = true;
+      status.textContent = 'OpenCV sẵn sàng - Bấm nút để bắt đầu';
+    }
+
+    function findNumberRegion(src) {
+      const dst = new cv.Mat();
+      const gray = new cv.Mat();
+      const binary = new cv.Mat();
+      
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+      cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      
+      let bestRect = null;
+      let bestArea = 0;
+      
+      for (let i = 0; i < contours.size(); i++) {
+        const rect = cv.boundingRect(contours.get(i));
+        const aspectRatio = rect.width / rect.height;
+        
+        if (aspectRatio > 0.2 && aspectRatio < 5 && rect.width > 30 && rect.height > 15) {
+          const area = rect.width * rect.height;
+          if (area > bestArea) {
+            bestArea = area;
+            bestRect = rect;
           }
         }
-      });
-      status.textContent = 'OCR sẵn sàng';
+      }
+      
+      gray.delete(); dst.delete(); binary.delete();
+      contours.delete(); hierarchy.delete();
+      
+      return bestRect;
     }
 
     async function detectJerseyNumber() {
-      if (isProcessing || !worker || video.readyState !== 4) return;
-
+      if (isProcessing || !worker || !isOpenCvReady || video.readyState !== 4) return;
+      
       isProcessing = true;
-
+      
       try {
-        const scale = 0.5;
-        const w = video.videoWidth * scale;
-        const h = video.videoHeight * scale;
-
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = w;
-        tempCanvas.height = h;
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.drawImage(video, 0, 0, w, h);
-
-        const cropW = w * 0.7;
-        const cropH = h * 0.7;
-        const cropX = (w - cropW) / 2;
-        const cropY = (h - cropH) / 2;
-
+        const scale = 0.4;
+        const w = Math.floor(video.videoWidth * scale);
+        const h = Math.floor(video.videoHeight * scale);
+        
         const canvas = document.createElement('canvas');
-        canvas.width = cropW;
-        canvas.height = cropH;
+        canvas.width = w;
+        canvas.height = h;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(tempCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-        const { data: { text } } = await worker.recognize(canvas, 'eng', {
-          tessedit_char_whitelist: '0123456789'
-        })
-
-        const numbers = text.match(/\d+/g);
-
-        if (numbers && numbers.length > 0) {
-          const number = numbers[0];
-          if (number.length >= 1 && number.length <= 3) {
-            result.textContent = `Số áo: ${number}`;
-            result.classList.add('show');
-            status.textContent = `Đã phát hiện: ${number}`;
+        ctx.drawImage(video, 0, 0, w, h);
+        
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const src = cv.matFromImageData(imageData);
+        
+        const rect = findNumberRegion(src);
+        
+        if (rect) {
+          const pad = 15;
+          let cropX = Math.max(0, rect.x - pad);
+          let cropY = Math.max(0, rect.y - pad);
+          let cropW = Math.min(src.cols - cropX, rect.width + pad * 2);
+          let cropH = Math.min(src.rows - cropY, rect.height + pad * 2);
+          
+          const crop = src.roi(new cv.Rect(cropX, cropY, cropW, cropH));
+          
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = crop.cols;
+          cropCanvas.height = crop.rows;
+          const cropCtx = cropCanvas.getContext('2d');
+          
+          const tempMat = new cv.Mat();
+          cv.cvtColor(crop, tempMat, cv.COLOR_RGBA2RGBA, 0);
+          const imgData = cropCtx.createImageData(crop.cols, crop.rows);
+          imgData.data.set(tempMat.data);
+          cropCtx.putImageData(imgData, 0, 0);
+          
+          const { data: { text } } = await worker.recognize(cropCanvas, 'eng', {
+            tessedit_char_whitelist: '0123456789'
+          });
+          
+          const numbers = text.match(/\d+/g);
+          
+          if (numbers && numbers.length > 0) {
+            const number = numbers[0];
+            if (number.length >= 1 && number.length <= 3) {
+              result.textContent = `Số áo: ${number}`;
+              result.classList.add('show');
+              status.textContent = `Đã phát hiện: ${number}`;
+            }
           }
+          
+          crop.delete(); tempMat.delete();
         } else {
           result.classList.remove('show');
         }
+        
+        src.delete();
       } catch (e) {
         console.error(e);
       }
-
+      
       isProcessing = false;
     }
 
-    function toGrayscale(sourceCanvas) {
-      const canvas = document.createElement('canvas');
-      canvas.width = sourceCanvas.width;
-      canvas.height = sourceCanvas.height;
-      const ctx = canvas.getContext('2d');
-
-      ctx.drawImage(sourceCanvas, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        data[i] = gray;
-        data[i + 1] = gray;
-        data[i + 2] = gray;
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-      return canvas;
-    }
-
     async function startCamera() {
+      if (!isOpenCvReady) {
+        status.textContent = 'Vui lòng chờ OpenCV tải xong';
+        return;
+      }
+      
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
         });
         video.srcObject = stream;
-
-        await initOCR();
-
+        
+        status.textContent = 'Đang tải OCR...';
+        worker = await Tesseract.createWorker('eng', 1, {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              status.textContent = `Đang nhận dạng: ${Math.round(m.progress * 100)}%`;
+            }
+          }
+        });
+        
+        status.textContent = 'Đang chạy...';
         btnStart.disabled = true;
         btnStart.textContent = 'Đang chạy...';
-
-        setInterval(detectJerseyNumber, 1000);
+        
+        setInterval(detectJerseyNumber, 800);
       } catch (e) {
-        status.textContent = 'Lỗi camera: ' + e.message;
+        status.textContent = 'Lỗi: ' + e.message;
       }
     }
 
